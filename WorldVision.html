@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MOTO SAT // HUD de Navegação Orbital</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+    }
+    body {
+      background-color: #030712;
+      color: #22d3ee;
+      font-family: 'Rajdhani', sans-serif;
+      overflow: hidden;
+      height: 100vh;
+      width: 100vw;
+    }
+    .font-orbitron {
+      font-family: 'Orbitron', sans-serif;
+    }
+
+    .scanlines {
+      background: linear-gradient(
+        rgba(18, 16, 16, 0) 50%, 
+        rgba(0, 0, 0, 0.35) 50%
+      ), linear-gradient(
+        90deg,
+        rgba(255, 0, 0, 0.03),
+        rgba(0, 255, 0, 0.01),
+        rgba(0, 0, 255, 0.03)
+      );
+      background-size: 100% 4px, 6px 100%;
+      pointer-events: none;
+    }
+
+    .glow-cyan {
+      text-shadow: 0 0 10px rgba(34, 211, 238, 0.7), 0 0 20px rgba(34, 211, 238, 0.4);
+    }
+    .glow-box-cyan {
+      box-shadow: 0 0 15px rgba(34, 211, 238, 0.25), inset 0 0 15px rgba(34, 211, 238, 0.15);
+      border: 1px solid rgba(34, 211, 238, 0.4);
+    }
+    .glow-box-amber {
+      box-shadow: 0 0 15px rgba(245, 158, 11, 0.25), inset 0 0 15px rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+    }
+
+    @keyframes radar-sweep {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .radar-sweeper {
+      animation: radar-sweep 4s linear infinite;
+      transform-origin: center;
+    }
+
+    .filter-thermal {
+      filter: saturate(300%) hue-rotate(80deg) invert(90%) contrast(150%);
+    }
+
+    .leaflet-container {
+      background: #020617 !important;
+    }
+    .leaflet-control-attribution {
+      display: none !important;
+    }
+
+    ::-webkit-scrollbar {
+      width: 4px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #090d16;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #22d3ee;
+      border-radius: 2px;
+    }
+  </style>
+</head>
+<body class="relative flex flex-col justify-between p-2 md:p-4 bg-slate-950">
+
+  <div class="scanlines absolute inset-0 z-30"></div>
+
+  <div id="map" class="absolute inset-0 z-0 h-full w-full transition-all duration-500"></div>
+
+  <div id="radar-overlay" class="absolute inset-0 z-10 pointer-events-none flex items-center justify-center opacity-40">
+    <svg class="w-[80vw] h-[80vw] max-w-[700px] max-h-[700px]" viewBox="0 0 500 500">
+      <circle cx="250" cy="250" r="230" fill="none" stroke="#22d3ee" stroke-width="1" stroke-dasharray="4 8" />
+      <circle cx="250" cy="250" r="170" fill="none" stroke="#22d3ee" stroke-width="1.5" opacity="0.6" />
+      <circle cx="250" cy="250" r="100" fill="none" stroke="#22d3ee" stroke-width="1" stroke-dasharray="2 4" />
+      <circle cx="250" cy="250" r="30" fill="none" stroke="#22d3ee" stroke-width="1" />
+      
+      <line x1="250" y1="10" x2="250" y2="490" stroke="#22d3ee" stroke-width="0.8" opacity="0.4" />
+      <line x1="10" y1="250" x2="490" y2="250" stroke="#22d3ee" stroke-width="0.8" opacity="0.4" />
+      
+      <g class="radar-sweeper">
+        <path d="M 250 250 L 250 20 A 230 230 0 0 1 480 250 Z" fill="url(#radar-grad)" opacity="0.35" />
+      </g>
+
+      <defs>
+        <radialGradient id="radar-grad" cx="50%" cy="50%" r="50%" fx="100%" fy="0%">
+          <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.8" />
+          <stop offset="100%" stop-color="#22d3ee" stop-opacity="0" />
+        </radialGradient>
+      </defs>
+    </svg>
+  </div>
+
+  <header class="relative z-20 flex justify-between items-start gap-2 bg-slate-950/80 backdrop-blur-md p-3 rounded-lg glow-box-cyan">
+    <div class="flex items-center gap-3">
+      <div class="relative flex items-center justify-center w-10 h-10 rounded bg-cyan-950/80 border border-cyan-400">
+        <i class="fa-solid fa-satellite-dish text-cyan-400 text-xl animate-pulse"></i>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="font-orbitron font-extrabold text-lg md:text-xl tracking-wider text-cyan-400 glow-cyan">
+            MOTO<span class="text-amber-400">SAT</span>
+          </h1>
+          <span class="text-[10px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-500/50 px-1.5 py-0.5 rounded uppercase">
+            v4.8 Orbital
+          </span>
+        </div>
+        <p class="text-xs text-slate-400 font-mono flex items-center gap-2">
+          <span>LINK: <span class="text-emerald-400 font-semibold">SAT-789X (CONECTADO)</span></span>
+          <span class="hidden sm:inline">| LAT: <span id="lat-val">-22.3149</span></span>
+        </p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-4 text-right">
+      <div class="hidden sm:block font-mono">
+        <div id="clock-time" class="font-orbitron text-lg text-cyan-300 font-bold leading-none">12:00:00</div>
+        <div id="clock-date" class="text-[10px] text-slate-400 uppercase tracking-widest">20/10/2026</div>
+      </div>
+      <div class="flex flex-col items-end">
+        <div class="flex gap-1 items-end h-5">
+          <div class="w-1.5 h-2 bg-emerald-400"></div>
+          <div class="w-1.5 h-3 bg-emerald-400"></div>
+          <div class="w-1.5 h-4 bg-emerald-400"></div>
+          <div class="w-1.5 h-5 bg-emerald-400 animate-pulse"></div>
+        </div>
+        <span class="text-[9px] font-mono text-emerald-400 tracking-tighter mt-0.5">SINAL 99%</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="relative z-20 flex-1 flex justify-between items-center my-2 pointer-events-none">
+    
+    <div class="pointer-events-auto flex flex-col gap-3 bg-slate-950/75 backdrop-blur-md p-3 rounded-lg glow-box-cyan max-w-[160px]">
+      <div>
+        <span class="text-[10px] font-mono text-slate-400 block uppercase tracking-wider">Velocidade</span>
+        <div class="flex items-baseline gap-1">
+          <span id="speed-val" class="font-orbitron text-3xl font-black text-cyan-400 glow-cyan">48</span>
+          <span class="text-xs text-cyan-600 font-bold">KM/H</span>
+        </div>
+      </div>
+
+      <div class="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden border border-cyan-500/30">
+        <div id="speed-bar" class="bg-cyan-400 h-full w-[40%] transition-all duration-300"></div>
+      </div>
+
+      <div class="border-t border-slate-800 pt-2 flex justify-between text-xs font-mono">
+        <span class="text-slate-400">ALTITUDE</span>
+        <span class="text-cyan-300 font-bold">542 M</span>
+      </div>
+      <div class="flex justify-between text-xs font-mono">
+        <span class="text-slate-400">PRECISÃO</span>
+        <span class="text-emerald-400 font-bold">0.8 M</span>
+      </div>
+    </div>
+
+    <div class="pointer-events-auto flex flex-col gap-2 bg-slate-950/75 backdrop-blur-md p-3 rounded-lg glow-box-cyan max-w-[180px]">
+      <span class="text-[10px] font-mono text-slate-400 uppercase tracking-wider border-b border-slate-800 pb-1">
+        Filtro Óptico
+      </span>
+      <div class="grid grid-cols-1 gap-1.5">
+        <button id="btn-mode-normal" onclick="setMapMode('normal')" class="text-left text-xs font-mono px-2 py-1 rounded bg-cyan-950/80 border border-cyan-400 text-cyan-300 hover:bg-cyan-900 transition">
+          <i class="fa-solid fa-eye text-cyan-400 mr-1"></i> NORMAL
+        </button>
+        <button id="btn-mode-sat" onclick="setMapMode('sat')" class="text-left text-xs font-mono px-2 py-1 rounded bg-slate-900 border border-slate-700 text-slate-400 hover:bg-cyan-950 hover:text-cyan-300 transition">
+          <i class="fa-solid fa-globe text-cyan-400 mr-1"></i> ORBITAL REAL
+        </button>
+        <button id="btn-mode-thermal" onclick="setMapMode('thermal')" class="text-left text-xs font-mono px-2 py-1 rounded bg-slate-900 border border-slate-700 text-slate-400 hover:bg-amber-950 hover:text-amber-400 transition">
+          <i class="fa-solid fa-temperature-high text-amber-400 mr-1"></i> TÉRMICO
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="relative z-20 bg-slate-950/90 backdrop-blur-md p-3 rounded-lg glow-box-amber flex flex-col gap-2">
+    
+    <div class="flex items-center justify-between bg-amber-950/30 border border-amber-500/40 p-2.5 rounded">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-400 flex items-center justify-center text-amber-400 font-bold">
+          <i class="fa-solid fa-box font-lg"></i>
+        </div>
+        <div>
+          <div class="text-[10px] font-mono text-amber-400/80 uppercase">Destino da Coleta #402</div>
+          <div class="text-sm font-bold text-slate-100 font-mono truncate max-w-[180px] sm:max-w-xs">
+            Rua Dr. Fernando Costa, 142
+          </div>
+        </div>
+      </div>
+      <div class="text-right font-mono">
+        <div class="text-xs text-amber-400 font-bold">1.4 KM</div>
+        <div class="text-[10px] text-slate-400">ETA: 4 MIN</div>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between gap-2 pt-1">
+      <button onclick="recenterMap()" class="flex-1 bg-cyan-950 hover:bg-cyan-900 border border-cyan-400/60 text-cyan-300 font-mono py-2 rounded text-xs font-bold transition flex items-center justify-center gap-2">
+        <i class="fa-solid fa-crosshairs text-cyan-400"></i> RECENTRAR
+      </button>
+
+      <button onclick="toggleRadar()" class="flex-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 font-mono py-2 rounded text-xs font-bold transition flex items-center justify-center gap-2">
+        <i class="fa-solid fa-radar text-amber-400"></i> RADAR HUD
+      </button>
+
+      <button onclick="triggerEmergency()" class="bg-red-950 hover:bg-red-900 border border-red-500 text-red-400 font-mono px-3 py-2 rounded text-xs font-bold transition flex items-center justify-center gap-1">
+        <i class="fa-solid fa-triangle-exclamation"></i> SOS
+      </button>
+    </div>
+  </footer>
+
+  <script>
+    let userLat = -22.3149;
+    let userLng = -49.0606;
+    let map, marker, tileLayer;
+
+    function initMap() {
+      map = L.map('map', {
+        center: [userLat, userLng],
+        zoom: 16,
+        zoomControl: false
+      });
+
+      tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19,
+        subdomains: 'abcd'
+      }).addTo(map);
+
+      const motoIcon = L.divIcon({
+        className: 'custom-moto-icon',
+        html: `
+          <div class="relative flex items-center justify-center w-8 h-8">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+            <div class="relative flex items-center justify-center w-8 h-8 bg-slate-950 border-2 border-cyan-400 rounded-full text-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.8)]">
+              <i class="fa-solid fa-motorcycle text-xs"></i>
+            </div>
+          </div>
+        `,
+        iconSize: [32, 32],
+        iconAnchor: [16, 16]
+      });
+
+      marker = L.marker([userLat, userLng], { icon: motoIcon }).addTo(map);
+
+      L.circle([userLat + 0.005, userLng + 0.004], {
+        color: '#f59e0b',
+        fillColor: '#f59e0b',
+        fillOpacity: 0.3,
+        radius: 60
+      }).addTo(map);
+    }
+
+    function setMapMode(mode) {
+      const mapEl = document.getElementById('map');
+      
+      document.querySelectorAll('#btn-mode-normal, #btn-mode-sat, #btn-mode-thermal').forEach(btn => {
+        btn.className = "text-left text-xs font-mono px-2 py-1 rounded bg-slate-900 border border-slate-700 text-slate-400 hover:bg-cyan-950 transition";
+      });
+
+      mapEl.classList.remove('filter-thermal');
+
+      if (mode === 'normal') {
+        tileLayer.setUrl('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
+        document.getElementById('btn-mode-normal').className = "text-left text-xs font-mono px-2 py-1 rounded bg-cyan-950/80 border border-cyan-400 text-cyan-300";
+      } else if (mode === 'sat') {
+        tileLayer.setUrl('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}');
+        document.getElementById('btn-mode-sat').className = "text-left text-xs font-mono px-2 py-1 rounded bg-cyan-950/80 border border-cyan-400 text-cyan-300";
+      } else if (mode === 'thermal') {
+        tileLayer.setUrl('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
+        mapEl.classList.add('filter-thermal');
+        document.getElementById('btn-mode-thermal').className = "text-left text-xs font-mono px-2 py-1 rounded bg-amber-950/80 border border-amber-400 text-amber-300";
+      }
+    }
+
+    function recenterMap() {
+      if (map && marker) {
+        map.setView(marker.getLatLng(), 17, { animate: true });
+      }
+    }
+
+    function toggleRadar() {
+      const radar = document.getElementById('radar-overlay');
+      radar.classList.toggle('hidden');
+    }
+
+    function triggerEmergency() {
+      alert('[ALERTA DE EMERGÊNCIA SATÉLITE]\nSinal de SOS transmitido com coordenadas de precisão para a central.');
+    }
+
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('clock-time').innerText = now.toLocaleTimeString('pt-BR');
+      document.getElementById('clock-date').innerText = now.toLocaleDateString('pt-BR');
+    }
+
+    function simulateTelemetry() {
+      setInterval(() => {
+        const randomSpeed = Math.floor(Math.random() * 25) + 35;
+        document.getElementById('speed-val').innerText = randomSpeed;
+        document.getElementById('speed-bar').style.width = `${(randomSpeed / 90) * 100}%`;
+      }, 2500);
+    }
+
+    function startGPS() {
+      if ("geolocation" in navigator) {
+        navigator.geolocation.watchPosition((pos) => {
+          userLat = pos.coords.latitude;
+          userLng = pos.coords.longitude;
+          
+          document.getElementById('lat-val').innerText = userLat.toFixed(4);
+
+          if (marker && map) {
+            const newPos = new L.LatLng(userLat, userLng);
+            marker.setLatLng(newPos);
+            map.panTo(newPos);
+          }
+        }, (err) => {
+          console.warn("GPS em modo de simulação.");
+        }, { enableHighAccuracy: true });
+      }
+    }
+
+    window.onload = () => {
+      initMap();
+      updateClock();
+      setInterval(updateClock, 1000);
+      simulateTelemetry();
+      startGPS();
+    };
+  </script>
+</body>
+</html>
